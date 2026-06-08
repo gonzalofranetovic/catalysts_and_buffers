@@ -1,0 +1,1106 @@
+---
+title: "Catalysts and buffers: How diversity and status in social networks shape attitudes towards inequality in contemporary societies"
+subtitle: "Outputs"
+author: "Gonzalo Franetovic"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  rmdformats::downcute:
+    toc_depth: 3 
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    highlight: tango
+    paged_table: true
+---
+
+
+```{r Setup, message=FALSE, warning=FALSE, include=FALSE, paged.print=TRUE}
+knitr::opts_chunk$set(
+	message = FALSE,
+	warning = FALSE,
+	echo = FALSE,
+	include = TRUE,
+	fig.align="center",
+	out.width='\\textwidth',
+	fig.fullwidth=TRUE,
+	paged.print=TRUE
+	)
+```
+
+```{r}
+
+# Load packages
+# install.packages("pacman")
+# install.packages("devtools")
+# devtools::install_git("https://code.europa.eu/digclass/digclass.git")
+
+library("pacman")
+p_load(
+  tidyverse, here, sjlabelled, stringr, haven, ggpubr, ggplotify, sjmisc,
+  ggrepel, stargazer, lme4, performance, sjPlot, ggeffects, 
+  sandwich, lmtest, ggcorrplot, psych, gridExtra, cowplot,
+  conflicted, summarytools, openxlsx, janitor, DIGCLASS, patchwork,
+  lavaan, semTools, fixest, lmerTest, clubSandwich, mgcv
+)
+
+# Options
+options(max.print=999999)
+options(scipen=999)
+
+#Packages conflicts
+conflicts_prefer(dplyr::select,
+                 dplyr::filter,
+                 dplyr::lag,
+                 sjlabelled::as_label,
+                 cowplot::plot_grid,
+                 lme4::lmer)
+
+```
+
+
+```{r}
+# Load data
+rm(list = ls())
+final_database = readRDS(here("Output", "260608_Final_Database_Article.rds"))
+names(final_database)
+
+final_database |> as.data.frame()  |> stargazer(type = "text", digits = 2)
+```
+
+```{r}
+#Countries
+data_country = final_database %>% 
+  distinct(country_short)
+#Country vectors
+final_countries_long = final_database %>% distinct(country_long) %>% as_vector()
+final_countries_short = final_database %>% distinct(country_short) %>% as_vector()
+
+plot_countries = paste(shQuote(final_countries_short, type="sh"), collapse=", ") 
+plot_countries = gsub("'", "", plot_countries)
+
+```
+
+```{r}
+#Labs
+attitudes.labs <- c("Perception of inequality", "Preference for redistribution")
+names(attitudes.labs) <- c("p_ineq", "b_redis")
+
+network.labs <- c("Network diversity", "Network status")
+names(network.labs) <- c("net_diversity_std", "net_status_std")
+```
+
+
+# Descriptives
+
+```{r}
+final_database_df = final_database %>% 
+  select(p_ineq, b_redis, 
+         net_diversity_std_country, net_status_std_country,
+         ses3,
+         sex, age, area
+         )
+
+table1 <- dfSummary(final_database_df, 
+                    round.digits = 2,
+                    labels.col = FALSE,
+                    valid.col	= FALSE,
+                    na.col	=FALSE,
+                    graph.col	= FALSE)
+
+print(table1, method = "browser", file = here("Output", "Body", "Table_1.html"))
+
+```
+
+
+## Personal networks
+
+```{r}
+
+# pg_1_driver
+
+#Occupations master
+isco_codes = c(8331, 1120, 9112, 5141, 1212,
+               2611, 7231, 2221, 5412, 2341)
+isco_positions = c("01", "02", "03", "04", "05", 
+                   "06", "07", "08", "09", "10")
+
+isco_master = all_labels$isco08 %>% 
+  clean_names() %>% 
+  filter(isco08 %in% isco_codes) %>% 
+  arrange(factor(isco08, levels = isco_codes)) %>% 
+  rename(isco08 = isco08,
+         occupation = isco08_label_e) %>% 
+  mutate(isei08 = as.numeric(isco08_to_isei(isco08))) %>% 
+  add_column(isco_positions) %>% 
+  mutate(occupation = str_replace_all(occupation, "'", ""))
+
+#Column names
+network_positions_frq = final_database %>% 
+  select(starts_with("pg_")) %>% 
+  summarise_all(mean) %>%
+  pivot_longer(
+    cols = everything(),   # Select all columns
+    names_to = "variable", # Column for variable names
+    values_to = "value"    # Column for values
+  )
+
+table_a1 = isco_master %>% 
+  bind_cols(network_positions_frq) %>% 
+  mutate(value = round(value, 2)) %>% 
+  select(occupation, isco08, isei08, value) %>% 
+  rename(isei = isei08,
+         pct_known = value) %>% 
+  arrange(desc(isei))
+
+table_a1
+
+write.xlsx(table_a1, here("Output", "Appendix", "Table_A1.xlsx"))
+
+```
+
+
+```{r}
+
+n_total = nrow(final_database)
+
+table_a4_1 = final_database %>% 
+  group_by(country_long, country_short) %>% 
+  summarise(n = n()) 
+
+table_a4_2 = final_database %>% 
+  group_by(country_long, country_short) %>% 
+  summarise_all(mean) %>% 
+  select(country_long, country_short, starts_with("pn_"), 
+         net_diversity_std, net_status_std, p_ineq, b_redis)
+
+table_a4_3 = final_database %>% 
+  summarise_all(mean) %>% 
+  select(country_long, country_short, starts_with("pn_"), 
+         net_diversity_std, net_status_std, p_ineq, b_redis)  %>% 
+  mutate(across(c(starts_with("country_")),
+               ~as.character(.),
+               .names = '{col}')) %>% 
+  mutate(country_long="Total",
+         n=n_total)
+
+table_a4 = table_a4_1 %>% 
+  left_join(table_a4_2) %>% 
+  bind_rows(table_a4_3) 
+
+table_a4 = table_a4 %>%
+  mutate(across(c(pn_upperreachability:b_redis), ~ round(.x, 2)))
+
+table_a4
+
+write.xlsx(table_a4, here("Output", "Appendix", "Table_A4.xlsx"))
+
+```
+
+
+```{r, results = 'asis'}
+
+#Individual plot
+figure_1 <- final_database %>%
+  ggplot(aes(x = net_status_std_country, y = net_diversity_std_country)) +
+  geom_point(size = 0.01) +
+  geom_smooth(method="loess", se=FALSE, color="black", span=1.0) +
+  theme_bw() +
+  labs(x = "Network status", y = "Network diversity")
+
+figure_1
+
+ggsave(here("Output", "Body", "Figure_1.png"),
+       figure_1, height = 5, width = 10, dpi = 600)
+
+cor(final_database$net_status_std_country, final_database$net_diversity_std_country)
+
+```
+
+## Bivariates
+
+### Individuals
+
+### Countries
+
+```{r}
+
+# Means by country
+network_diversity_country = final_database %>% 
+  select(country_long, country_short, 
+  starts_with("pn_"), starts_with("net_")) %>% 
+  group_by(country_long, country_short) %>% 
+  summarise_all(mean) %>% 
+  ungroup() 
+
+# Means by total
+network_diversity_total = final_database %>% 
+  select(country_long, country_short, 
+  starts_with("pn_"), starts_with("net_")) %>% 
+  summarise_all(mean)  %>% 
+  mutate(country_long = ifelse(is.na(country_long), "Total", country_long)) %>% 
+  mutate(country_short = as.character(country_short),
+         country_region = as.character(country_region))
+
+#Table: Means
+network_diversity_country_total = network_diversity_country %>% 
+  bind_rows(network_diversity_total)
+
+```
+
+
+```{r}
+# Means by country
+attitudes_country = final_database %>% 
+  select(country_long, country_short, p_ineq, b_redis) %>% 
+  group_by(country_long, country_short) %>% 
+  summarise_all(mean) %>% 
+  ungroup() %>% 
+  mutate(country_long = as.character(country_long),
+         country_short = as.character(country_short),
+         country_region = as.character(country_region))
+
+# Means by total
+attitudes_total = final_database %>% 
+  select(country_long, country_short, p_ineq, b_redis) %>% 
+  summarise_all(mean)  %>% 
+  mutate(country_long = ifelse(is.na(country_long), "Total", country_long)) %>% 
+  mutate(country_short = as.character(country_short),
+         country_region = as.character(country_region))
+
+#Table: Means
+attitudes_country_total = attitudes_country %>% 
+  bind_rows(attitudes_total)
+
+attitudes_country_total
+
+#Merge
+attitudes_network_country = attitudes_country %>% 
+  left_join(network_diversity_country)
+
+#Long country database
+attitudes_network_country_long = attitudes_network_country %>% 
+  select(country_short, p_ineq, b_redis, net_diversity_std, net_status_std) %>% 
+  pivot_longer(cols = c(net_diversity_std, net_status_std), 
+               names_to = "network", 
+               values_to = "network_values") %>% 
+  pivot_longer(cols = c(p_ineq, b_redis), 
+               names_to = "attitude", 
+               values_to = "attitude_values")
+
+attitudes_network_country_long$attitude <- factor(attitudes_network_country_long$attitude,
+                levels = c("p_ineq", "b_redis"))
+```
+
+```{r}
+
+# === PERCEPTION PLOT (diversity) ===
+data_country_diversity <- final_database %>%
+  group_by(country_long) %>%
+  mutate(
+    diversity_q_country = ntile(net_diversity_std_country, 5)
+  ) %>%
+  ungroup()
+
+# Country means
+data_country_diversity_A <- data_country_diversity %>%
+  group_by(country_long) %>%
+  summarise(n = n(), p_ineq_country = mean(p_ineq, na.rm = TRUE), .groups = "drop") %>%
+  mutate(diversity_q_country = "Country average")
+
+# Q1/Q5 means
+data_country_diversity_B <- data_country_diversity %>% 
+  filter(diversity_q_country %in% c(1, 5)) %>%
+  mutate(diversity_q_country = factor(diversity_q_country, levels = c(1, 5), labels = c("Q1 (lowest)", "Q5 (highest)"))) %>%
+  group_by(country_long, diversity_q_country) %>%
+  summarise(n = n(), p_ineq = mean(p_ineq, na.rm = TRUE), .groups = "drop")
+
+# Orden países por media EXPLÍCITO como factor
+country_order <- data_country_diversity_A %>%
+  arrange(p_ineq_country) %>%
+  pull(country_long)
+
+data_country_diversity_plot <- bind_rows(data_country_diversity_A, data_country_diversity_B) %>%
+  mutate(
+    country_long = factor(country_long, levels = country_order),
+    diversity_q_country = factor(diversity_q_country, 
+                                 levels = c("Q1 (lowest)", "Country average", "Q5 (highest)"))
+  )
+
+
+figure_2 <- ggplot(data_country_diversity_plot, aes(x = country_long, y = ifelse(diversity_q_country == "Country average", p_ineq_country, p_ineq), 
+                                shape = diversity_q_country, color = diversity_q_country)) +
+  geom_point(size = 2.5) +
+  scale_y_continuous(limits = c(2.75,4.75)) +
+  scale_shape_manual(values = c(15, 8, 17)) +
+  scale_color_manual(values = c("#D55E00", "#0072B2", "#009E73")) +
+  labs(x = "Country", y = "Perception of inequality", 
+       shape = "Network diversity", color = "Network diversity") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom") +
+  # Horizontal line at global country mean
+  geom_hline(yintercept = mean(data_country_diversity_plot$p_ineq_country[data_country_diversity_plot$diversity_q_country == "Country average"], na.rm = TRUE), 
+             linetype = "dashed", color = "gray50")
+
+figure_2
+ggsave(here("Output", "Body", "Figure_2.png"), figure_2, height = 5, width = 10, dpi = 600)
+
+# === REDISTRIBUTION PLOT (status) ===
+data_country_status <- final_database %>%
+  group_by(country_long) %>%
+  mutate(
+    status_q_country = ntile(net_status_std_country, 5)
+  ) %>%
+  ungroup()
+
+# Country means
+data_country_status_A <- data_country_status %>%
+  group_by(country_long) %>%
+  summarise(n = n(), b_redis_country = mean(b_redis, na.rm = TRUE), .groups = "drop") %>%
+  mutate(status_q_country = "Country average")
+
+# Q1/Q5 means
+data_country_status_B <- data_country_status %>% 
+  filter(status_q_country %in% c(1, 5)) %>%
+  mutate(status_q_country = factor(status_q_country, levels = c(1, 5), labels = c("Q1 (lowest)", "Q5 (highest)"))) %>%
+  group_by(country_long, status_q_country) %>%
+  summarise(n = n(), b_redis = mean(b_redis, na.rm = TRUE), .groups = "drop")
+
+# Combine and order by country mean
+# Orden países por media b_redis EXPLÍCITO
+country_order_D <- data_country_status_A %>%
+  arrange(b_redis_country) %>%
+  pull(country_long)
+
+data_country_status_plot <- bind_rows(data_country_status_A, data_country_status_B) %>%
+  mutate(
+    country_long = factor(country_long, levels = country_order_D),
+    status_q_country = factor(status_q_country, 
+                              levels = c("Q1 (lowest)", "Country average", "Q5 (highest)"))
+  )
+
+
+figure_3 <- ggplot(data_country_status_plot, aes(x = country_long, y = ifelse(status_q_country == "Country average", b_redis_country, b_redis), 
+                                shape = status_q_country, color = status_q_country)) +
+  geom_point(size = 2.5) +
+  scale_y_continuous(limits = c(2.75,4.75)) +
+  scale_shape_manual(values = c(15, 8, 17)) +
+  scale_color_manual(values = c("#D55E00", "#0072B2", "#009E73")) +
+  labs(x = "Country", y = "Preference for redistribution", 
+       shape = "Network status", color = "Network status") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom") +
+  geom_hline(yintercept = mean(data_country_status_plot$b_redis_country[data_country_status_plot$status_q_country == "Country average"], na.rm = TRUE), 
+             linetype = "dashed", color = "gray50")
+
+figure_3
+ggsave(here("Output", "Body", "Figure_3.png"), figure_3, height = 5, width = 10, dpi = 600)
+
+
+```
+
+
+  # Regressions
+
+  ## Perception of inequality
+
+  ### Models
+
+  ```{r}
+
+  # Base
+  MA1a = lm(p_ineq ~ net_diversity_std_country + country_short,
+                  data=final_database)
+
+  MA1b = lm(p_ineq ~ net_status_std_country + country_short,
+                  data=final_database)
+
+  MA1c = lm(p_ineq ~ net_diversity_std_country + net_status_std_country
+                  + country_short,
+                  data=final_database)
+
+  # + SES
+  MA2c = lm(p_ineq ~ net_diversity_std_country + net_status_std_country
+                  + ses3
+                  + country_short,
+                  data=final_database)
+
+  # + Sociodemographics
+  MA3c = lm(p_ineq ~ net_diversity_std_country + net_status_std_country
+                  + ses3
+                  + sex + age + age2 + area
+                  + country_short,
+                  data=final_database)
+
+  ```
+
+  ### Clustered SE
+
+  ```{r}
+  # Calculate clustered standard errors
+  clustered_se_MA1a <- vcovCL(MA1a, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  clustered_se_MA1b <- vcovCL(MA1b, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  clustered_se_MA1c <- vcovCL(MA1c, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  clustered_se_MA2c <- vcovCL(MA2c, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  clustered_se_MA3c <- vcovCL(MA3c, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  ```
+
+  ### Table 
+
+  ```{r}
+  tab_model(list(MA1a, MA1b, MA1c, MA2c, MA3c),
+            show.p = TRUE,
+            p.style = "stars",
+            p.threshold = c(0.05, 0.01, 0.001),
+            show.ci = FALSE,
+            show.se = TRUE,
+            collapse.se = TRUE,
+            rm.terms = "country_short [AU, CH, CN, CZ, DE, DK, EE, ES, FI, FR, 
+            GB, HR, HU, IL, IN, IS, JP, LT, MX, NZ, PH, RU, SE, SK, SR, TH, 
+            TR, TW, US, ZA]",
+            show.aic = TRUE,
+            auto.label = FALSE,
+            title = "Table. Linear regression models on perception of inequality",
+            string.pred = " ",
+            file = here("Output", "Appendix", "Models_A.html"),
+                        vcov = list(clustered_se_MA1a, clustered_se_MA1b, clustered_se_MA1c,
+                                    clustered_se_MA2c, clustered_se_MA3c)
+  )
+
+  ```
+
+  ## Preference for redistribution
+
+  ### Models
+
+  ```{r}
+
+  # Base
+  MB1a = lm(b_redis ~ net_diversity_std_country + country_short,
+                  data=final_database)
+
+  MB1b = lm(b_redis ~ net_status_std_country + country_short,
+                  data=final_database)
+
+  MB1c = lm(b_redis ~ net_diversity_std_country + net_status_std_country
+                  + country_short,
+                  data=final_database)
+
+  # + SES
+  MB2c = lm(b_redis ~ net_diversity_std_country + net_status_std_country
+                  + ses3
+                  + country_short,
+                  data=final_database)
+
+  # + Sociodemographics
+  MB3c = lm(b_redis ~ net_diversity_std_country + net_status_std_country
+                  + ses3
+                  + sex + age + age2 + area
+                  + country_short,
+                  data=final_database)
+
+  ```
+
+  ### Clustered SE
+
+  ```{r}
+  # Calculate clustered standard errors
+  clustered_se_MB1a <- vcovCL(MB1a, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  clustered_se_MB1b <- vcovCL(MB1b, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  clustered_se_MB1c <- vcovCL(MB1c, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  clustered_se_MB2c <- vcovCL(MB2c, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  clustered_se_MB3c <- vcovCL(MB3c, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+  ```
+
+  ### Table 
+
+  ```{r}
+  tab_model(list(MB1a, MB1b, MB1c, MB2c, MB3c),
+            show.p = TRUE,
+            p.style = "stars",
+            p.threshold = c(0.05, 0.01, 0.001),
+            show.ci = FALSE,
+            show.se = TRUE,
+            collapse.se = TRUE,
+            rm.terms = "country_short [AU, CH, CN, CZ, DE, DK, EE, ES, FI, FR, 
+            GB, HR, HU, IL, IN, IS, JP, LT, MX, NZ, PH, RU, SE, SK, SR, TH, 
+            TR, TW, US, ZA]",
+            show.aic = TRUE,
+            auto.label = FALSE,
+            title = "Table. Linear regression models on preference for redistribution",
+            string.pred = " ",
+            file = here("Output", "Appendix", "Models_B.html"),
+                        vcov = list(clustered_se_MB1a, clustered_se_MB1b, clustered_se_MB1c,
+                                    clustered_se_MB2c, clustered_se_MB3c)
+  )
+
+  ```
+
+  ## Resume
+
+  ```{r}
+  # Display results using tab_model
+  tab_model(list(
+    MA1c, MA2c, MA3c, 
+    MB1c, MB2c, MB3c
+  ),
+  show.p = TRUE,
+  p.style = "stars",
+  p.threshold = c(0.05, 0.01, 0.001),
+  show.ci = FALSE,
+  show.se = TRUE,
+  collapse.se = TRUE,
+  rm.terms = "country_short [AU, CH, CN, CZ, DE, DK, EE, ES, FI, FR, 
+  GB, HR, HU, IL, IN, IS, JP, LT, MX, NZ, PH, RU, SE, SK, SR, TH, 
+  TR, TW, US, ZA]",
+  df.method = "wald",
+  show.aic = TRUE,
+  auto.label = FALSE,
+  title = "Table. Linear regression models on perception of inequality (MA) and preference for redistribution (MB)",
+  string.pred = " ",
+  file = here("Output", "Body", "Table_2.html"),
+  vcov = list(clustered_se_MA1c, clustered_se_MA2c, clustered_se_MA3c,
+              clustered_se_MB1c, clustered_se_MB2c, clustered_se_MB3c)
+  )
+
+  # Compute BIC for each model
+  BIC_values_3 <- sapply(list(MA1c, MA2c, MA3c, MB1c, MB2c, MB3c), BIC)
+
+  # Print BIC values
+  BIC_values_3
+
+  ```
+
+  ```{r}
+  # --- Panel A: Efecto marginal de diversity → perception of inequality (MA3c) ---
+  pred_A <- ggpredict(MA3c, terms = "net_diversity_std_country")
+  pred_A
+
+  pA <- ggplot(pred_A, aes(x, predicted)) +
+    geom_line(color = "black", linewidth = 0.7) +
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
+                fill = "black", alpha = 0.15) +
+    theme_bw() +
+    labs(
+      y = attitudes.labs[1],
+      x = "Network diversity"
+    ) + 
+    scale_y_continuous(limits = c(3.9, 4.5), breaks = seq(3.9, 4.5, 0.1)) 
+
+  pA
+
+  effect_plot(MA3c, pred = net_diversity_std_country, interval = TRUE)
+
+
+  # --- Panel B: Efecto marginal de status → redistribution preference (MB3c) ---
+  pred_B <- ggpredict(MB3c, terms = "net_status_std_country")
+  pred_B
+
+  pB <- ggplot(pred_B, aes(x, predicted)) +
+    geom_line(color = "black", linewidth = 0.7) +
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
+                fill = "black", alpha = 0.15) +
+    theme_bw() +
+    labs(
+      y = attitudes.labs[2],
+      x = "Network status"
+    ) + 
+    scale_y_continuous(limits = c(3.1, 4.5), breaks = seq(3.1, 4.5, 0.2)) 
+
+  # --- Combinar ---
+  figure_4 <- (pA | pB) +
+    plot_annotation(tag_levels = "A")
+
+  ggsave(here("Output", "Body", "Figure_4.png"),
+        figure_4, height = 5, width = 10, dpi = 600)
+
+  ggpredict(MA3c, terms = "net_diversity_std_country[-4.16, 0, 2.39]", ci.lvl = 0.95)
+  ggpredict(MB3c, terms = "net_status_std_country[-4.41, 0, 3.25]", ci.lvl = 0.95)
+
+  ```
+
+  ```{r eval=FALSE, include=FALSE}
+
+  # Model checks
+  check_model(MA1c)
+  check_model(MA2c)
+  check_model(MA3c)
+  check_model(MB1c)
+  check_model(MB2c)
+  check_model(MB3c)
+
+  ```
+
+
+## Interactions: diversity and status
+
+```{r}
+
+MA4 = lm(p_ineq ~ net_diversity_std_country + net_status_std_country
+                + ses3
+                + sex + age + age2 + area
+                + net_status_std_country*net_diversity_std_country
+                + country_short,
+                data=final_database)
+
+MB4 = lm(b_redis ~ net_diversity_std_country + net_status_std_country
+                + ses3
+                + sex + age + age2 + area
+                + net_status_std_country*net_diversity_std_country
+                + country_short,
+                data=final_database)
+```
+
+```{r}
+clustered_se_MA4 <- vcovCL(MA4, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+clustered_se_MB4 <- vcovCL(MB4, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+```
+
+```{r}
+tab_model(list(MA4, MB4),
+          show.p = TRUE,
+          p.style = "stars",
+          p.threshold = c(0.05, 0.01, 0.001),
+          show.ci = FALSE,
+          show.se = TRUE,
+          collapse.se = TRUE,
+          rm.terms = "country_short [AU, CH, CN, CZ, DE, DK, EE, ES, FI, FR, 
+          GB, HR, HU, IL, IN, IS, JP, LT, MX, NZ, PH, RU, SE, SK, SR, TH, 
+          TR, TW, US, ZA]",
+          show.aic = TRUE,
+          auto.label = FALSE,
+          title = "Table. Linear regression models on attitudes towards inequality - Interactions 1",
+            string.pred = " ",
+          vcov = list(clustered_se_MA4, clustered_se_MB4),
+          file = here("Output", "Appendix", "Table_A6.html")
+)
+
+# Compute BIC for each model
+BIC_values_A6 <- sapply(list(MA4, MB4), BIC)
+
+# Print BIC values
+BIC_values_A6
+
+
+```
+
+```{r}
+
+#New
+MA4_pred <- ggpredict(MA4, terms = c("net_diversity_std_country", "net_status_std_country[1, 0, -1]"))
+int_1_1 <- ggplot(MA4_pred, aes(x, predicted, group = group)) + 
+    geom_line(aes(color = group, linetype = group), linewidth = 0.5) +  # Thicker lines
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.15) +
+    scale_color_manual(
+        values = c("#D55E00", "#0072B2", "#009E73"),
+        labels = c("Low (-1)", "Mean (0)", "High (+1)")
+    ) +
+    scale_linetype_manual(
+        values = c("dotted", "dashed", "solid"),
+        labels = c("Low (-1)", "Mean (0)", "High (+1)")
+    ) +
+    scale_fill_manual(
+        values = c("#D55E00", "#0072B2", "#009E73"),
+        labels = c("Low (-1)", "Mean (0)", "High (+1)")
+    ) +
+    theme_bw() +
+    labs(
+        y = attitudes.labs[1],
+        x = "Network diversity",
+        color = "Network\nstatus",
+        linetype = "Network\nstatus",
+        fill = "Network\nstatus"
+    ) +
+    guides(
+        fill = guide_legend(override.aes = list(alpha = 0.4)),
+        color = guide_legend(title = "Network\nstatus"),
+        linetype = guide_legend(title = "Network\nstatus")
+    ) +
+    theme(legend.position = "bottom") +
+    scale_y_continuous(limits = c(3.9, 4.5), breaks = seq(3.9, 4.5, 0.1))
+
+int_1_1
+
+
+MB4_pred <- ggpredict(MB4, terms = c("net_status_std_country", "net_diversity_std_country[1, 0, -1]"))
+int_1_3 <- ggplot(MB4_pred, aes(x, predicted, group = group)) + 
+    geom_line(aes(color = group, linetype = group), linewidth = 0.5) +  # Thicker lines
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.15) + 
+    scale_color_manual(
+        values = c("#D55E00", "#0072B2", "#009E73"),
+        labels = c("Low (-1)", "Mean (0)", "High (+1)")
+    ) +
+    scale_linetype_manual(
+        values = c("dotted", "dashed", "solid"),
+        labels = c("Low (-1)", "Mean (0)", "High (+1)")
+    ) +
+    scale_fill_manual(
+        values = c("#D55E00", "#0072B2", "#009E73"),
+        labels = c("Low (-1)", "Mean (0)", "High (+1)")
+    ) +
+    theme_bw() +
+    labs(
+        y = attitudes.labs[2],
+        x = "Network status",
+        color = "Network\ndiversity",
+        linetype = "Network\ndiversity",
+        fill = "Network\ndiversity"
+    ) +
+    guides(
+        fill = guide_legend(override.aes = list(alpha = 0.4)),
+        color = guide_legend(title = "Network\ndiversity"),
+        linetype = guide_legend(title = "Network\ndiversity")
+    ) +
+    theme(legend.position = "bottom") +
+    scale_y_continuous(limits = c(3.1, 4.5), breaks = seq(3.1, 4.5, 0.2))
+
+int_1_3
+
+int_1_1$data$group
+int_1_3$data$group
+
+figure_5 <- (int_1_1 | int_1_3) +
+  plot_annotation(tag_levels = "A") 
+
+
+figure_5
+
+ggsave(here("Output", "Body", "Figure_5.png"),
+       figure_5, height = 5, width = 10, dpi = 600)
+```
+
+
+
+```{r}
+
+round(min(final_database$net_diversity_std_country),2)
+round(max(final_database$net_diversity_std_country),2)
+
+round(min(final_database$net_status_std_country),2)
+round(max(final_database$net_status_std_country),2)
+
+#Predicted values
+get_model_data(MA4,  
+               type = "pred", 
+               terms = c("net_status_std_country[-1, 0, 1]", "net_diversity_std_country[-2.84, 0, 1.43]"),
+               ci.lvl = 0.95)
+
+get_model_data(MB4,  
+               type = "pred", 
+               terms = c("net_status_std_country[-1, 0, 1]", "net_diversity_std_country[-2.84, 0, 1.43]"),
+               ci.lvl = 0.95)
+
+```
+
+
+## Interactions: SES
+
+```{r}
+MA7 = lm(p_ineq ~ net_diversity_std_country + net_status_std_country
+                + ses3
+                + sex + age + age2 + area
+                + net_diversity_std_country*ses3
+                + country_short,
+                data=final_database)
+
+MA8 = lm(p_ineq ~ net_diversity_std_country + net_status_std_country
+                + ses3
+                + sex + age + age2 + area
+                + net_status_std_country*ses3
+                + country_short,
+                data=final_database)
+
+MB7 = lm(b_redis ~ net_diversity_std_country + net_status_std_country
+                + ses3
+                + sex + age + age2 + area
+                + net_diversity_std_country*ses3
+                + country_short,
+                data=final_database)
+
+MB8 = lm(b_redis ~ net_diversity_std_country + net_status_std_country
+                + ses3
+                + sex + age + age2 + area
+                + net_status_std_country*ses3
+                + country_short,
+                data=final_database)
+```
+
+```{r}
+clustered_se_MA7 <- vcovCL(MA7, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+clustered_se_MA8 <- vcovCL(MA8, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+clustered_se_MB7 <- vcovCL(MB7, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+clustered_se_MB8 <- vcovCL(MB8, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+```
+
+```{r}
+tab_model(list(MA7, MB8),
+          show.p = TRUE,
+          p.style = "stars",
+          p.threshold = c(0.05, 0.01, 0.001),
+          show.ci = FALSE,
+          show.se = TRUE,
+          collapse.se = TRUE,
+          rm.terms = "country_short [AU, CH, CN, CZ, DE, DK, EE, ES, FI, FR, 
+          GB, HR, HU, IL, IN, IS, JP, LT, MX, NZ, PH, RU, SE, SK, SR, TH, 
+          TR, TW, US, ZA]",
+          show.aic = TRUE,
+          auto.label = FALSE,
+          title = "Table. Linear regression models on attitudes towards inequality - Interactions 2",
+            string.pred = " ",
+          vcov = list(clustered_se_MA7, clustered_se_MB7,
+                      clustered_se_MA8, clustered_se_MB8),
+          file = here("Output", "Appendix", "Table_A7.html")
+)
+
+
+# Compute BIC for each model
+BIC_values_A7 <- sapply(list(MA7, MB8), BIC)
+
+# Print BIC values
+BIC_values_A7
+
+```
+
+```{r}
+
+MA7_pred <- ggpredict(MA7, terms = c("net_diversity_std_country", "ses3[Low,Mid,High]"))
+int_2_1 <- ggplot(MA7_pred, aes(x, predicted, group = group)) + 
+    geom_line(aes(color = group, linetype = group), linewidth = 0.5) +  # Thicker lines
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.15) +
+  scale_color_manual(
+        values = c("#D55E00", "#0072B2", "#009E73"),
+        labels = c("Low", "Mid", "High")
+    ) +
+    scale_linetype_manual(
+        values = c("dotted", "dashed", "solid"),
+        labels = c("Low", "Mid", "High")
+    ) +
+    scale_fill_manual(
+        values = c("#D55E00", "#0072B2", "#009E73"),
+        labels = c("Low", "Mid", "High")
+    ) +
+    theme_bw() +
+    labs(
+        y = attitudes.labs[1],
+        x = "Network diversity",
+        color = "SES",
+        linetype = "SES",
+        fill = "SES"
+    ) +
+    guides(
+        fill = guide_legend(override.aes = list(alpha = 0.4)),
+        color = guide_legend(title = "SES"),
+        linetype = guide_legend(title = "SES")
+    ) +
+    theme(legend.position = "right") +
+    scale_y_continuous(limits = c(3.9, 4.5), breaks = seq(3.9, 4.5, 0.1))
+
+int_2_1
+
+
+MB8_pred <- ggpredict(MB8, terms = c("net_status_std_country", "ses3[Low,Mid,High]"))
+int_3_3 <- ggplot(MB8_pred, aes(x, predicted, group = group)) + 
+    geom_line(aes(color = group, linetype = group), linewidth = 0.5) +  # Thicker lines
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.15) + 
+    scale_color_manual(
+        values = c("#D55E00", "#0072B2", "#009E73"),
+        labels = c("Low", "Mid", "High")
+    ) +
+    scale_linetype_manual(
+        values = c("dotted", "dashed", "solid"),
+        labels = c("Low", "Mid", "High")
+    ) +
+    scale_fill_manual(
+        values = c("#D55E00", "#0072B2", "#009E73"),
+        labels = c("Low", "Mid", "High")
+    ) +
+    theme_bw() +
+    labs(
+        y = attitudes.labs[2],
+        x = "Network status",
+        color = "SES",
+        linetype = "SES",
+        fill = "SES"
+    ) +
+    guides(
+        fill = guide_legend(override.aes = list(alpha = 0.4)),
+        color = guide_legend(title = "SES"),
+        linetype = guide_legend(title = "SES")
+    ) +
+    theme(legend.position = "right") +
+    scale_y_continuous(limits = c(3.1, 4.5), breaks = seq(3.1, 4.5, 0.2))
+
+int_3_3
+
+
+figure_6 <- (int_2_1 | int_3_3) +
+  plot_annotation(tag_levels = "A") +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+figure_6
+
+ggsave(here("Output", "Body", "Figure_6.png"),
+       figure_6, height = 5, width = 10, dpi = 600)
+```
+
+```{r}
+
+round(min(final_database$net_diversity_std_country),2)
+round(max(final_database$net_diversity_std_country),2)
+
+round(min(final_database$net_status_std_country),2)
+round(max(final_database$net_status_std_country),2)
+
+#Predicted values
+get_model_data(MA7,  
+               type = "pred", 
+               terms = c("net_diversity_std_country[-1, 0, 1]", "ses3[Low,Mid,High]"),
+               ci.lvl = 0.95)
+
+get_model_data(MB7,  
+               type = "pred", 
+               terms = c("net_diversity_std_country[-1, 0, 1]", "ses3[Low,Mid,High]"),
+               ci.lvl = 0.95)
+
+get_model_data(MA8,  
+               type = "pred", 
+               terms = c("net_status_std_country[-1, 0, 1]", "ses3[Low,Mid,High]"),
+               ci.lvl = 0.95)
+
+get_model_data(MB8,  
+               type = "pred",
+               terms = c("net_status_std_country[-1, 0, 1]", "ses3[Low,Mid,High]"),
+               ci.lvl = 0.95)
+
+final_database |> as.data.frame() |> stargazer(type = "text")
+```
+
+# Robustness check
+
+## Additional controls
+
+```{r}
+# Add additional variables
+issp_2017_original_full = readRDS(here("Output", "260608_ISSP_Social_Networks_Full.rds"))
+
+# Income
+
+# 1. Auto-detectar todas las variables que terminan en "_inc"
+inc_vars <- names(issp_2017_original_full)[str_ends(names(issp_2017_original_full), "_inc")]
+
+additional_controls <- issp_2017_original_full %>%
+  # 2. Recode: valores >= 999990 a NA en todas las income específicas
+  mutate(
+    across(
+      all_of(inc_vars),
+      ~ ifelse(.x >= 999990, NA, .x)
+    )
+  ) %>%
+  # 3. Variable unificada de income: coalesce de todas las específicas
+  mutate(
+    hh_inc_raw = coalesce(!!!rlang::syms(inc_vars))
+  ) %>%
+  # 4. Quintiles dentro de cada país
+  group_by(country_short) %>%
+  mutate(
+    hh_inc_quintile = if_else(
+      is.na(hh_inc_raw),
+      NA_integer_,
+      ntile(hh_inc_raw, 5)
+    )
+  ) %>%
+  mutate(hh_inc_quintile = ifelse(is.na(hh_inc_quintile), 6, hh_inc_quintile)) %>%
+  ungroup()
+
+#Political ideologuy: party_lr (1-5, left to right, 6 other)
+#Work status: work (1 working, 2 unemployed, 3 never worked)
+#Union membership: union (1 yes, 0 no)
+additional_controls = additional_controls %>%
+  mutate(political_ideology = if_else(party_lr >= 1 & party_lr <= 6, party_lr, NA),
+         educ_years = if_else(educyrs >= 0 & educyrs <= 90, as.numeric(educyrs), NA),
+         work_status = if_else(work >= 1 & work <= 3, work, NA),
+         union_member = if_else(union == 1, 1, if_else(union %in% c(2,3), 0, NA)))
+
+#Add value labels
+additional_controls = additional_controls %>%
+  mutate(hh_inc_quintile = factor(hh_inc_quintile, levels = 1:6,
+                                     labels = c("Q1", "Q2", "Q3", "Q4", "Q5", "Not declared")),
+         political_ideology = factor(political_ideology, levels = c(1, 2, 3, 4, 5, 6),
+                                     labels = c("Far-left", "Left", "Center", "Right", "Far-right", "Other")),
+         work_status = factor(work_status, levels = c(1, 2, 3),
+                              labels = c("Working", "Unemployed", "Never worked")),
+         union_member = factor(union_member, levels = c(0, 1),
+                               labels = c("No", "Yes")))
+
+frq(additional_controls, hh_inc_quintile, political_ideology, work_status, union_member)
+
+additional_controls = additional_controls %>%
+  select(caseid, country_short, hh_inc_quintile, educ_years, work_status, union_member, political_ideology)
+
+
+# Merge with final_database
+final_database_additional <- final_database %>%
+  left_join(additional_controls, by = c("caseid", "country_short"))
+
+# Percentage of missing values for political ideology
+# missing_political_ideology <- final_database_additional %>%
+#   summarise(
+#     missing = sum(is.na(political_ideology)),
+#     total = n(),
+#     percent_missing = (missing / total) * 100
+#   )
+# Political ideology: All missings in CN, GB, PH, SR, TW.
+
+final_database_additional_names <- names(final_database_additional)
+
+final_database_additional %>%
+  mutate(across(all_of(final_database_additional_names), ~ to_numeric(.))) %>%
+  as.data.frame() %>%
+  stargazer(type = "text")
+
+```
+
+```{r}
+
+# Re-run models with additional controls
+MA3c_add <- lm(p_ineq ~ net_diversity_std_country + net_status_std_country
+                  + ses3
+                  + sex + age + age2 + area
+                  + educ_years + hh_inc_quintile
+                  + work_status + union_member
+                  + country_short,
+                  data = final_database_additional)
+MB3c_add <- lm(b_redis ~ net_diversity_std_country + net_status_std_country
+                  + ses3
+                  + sex + age + age2 + area
+                  + educ_years + hh_inc_quintile
+                  + work_status + union_member
+                  + country_short,
+                  data = final_database_additional)
+# Calculate clustered standard errors
+clustered_se_MA3c_add <- vcovCL(MA3c_add, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+clustered_se_MB3c_add <- vcovCL(MB3c_add, vcov = vcovCL, type = "HC1", cluster = ~country_short)
+
+# Display results using tab_model
+tab_model(list(MA3c_add, MB3c_add),
+          show.p = TRUE,
+          p.style = "stars",
+          p.threshold = c(0.05, 0.01, 0.001),
+          show.ci = FALSE,
+          show.se = TRUE,
+          collapse.se = TRUE,
+          rm.terms = "country_short [AU, CH, CN, CZ, DE, DK, EE, ES, FI, FR, 
+          GB, HR, HU, IL, IN, IS, JP, LT, MX, NZ, PH, RU, SE, SK, SR, TH, 
+          TR, TW, US, ZA]",
+          show.aic = TRUE,
+          auto.label = FALSE,
+          title = "Table. Linear regression models on attitudes towards inequality - Additional controls",
+            string.pred = " ",
+          vcov = list(clustered_se_MA3c_add, clustered_se_MB3c_add),
+          file = here("Output", "Appendix", "Table_A5.html")
+)
+
+```

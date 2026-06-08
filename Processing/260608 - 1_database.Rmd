@@ -1,0 +1,823 @@
+---
+title: "Catalysts and buffers: How diversity and status in social networks shape attitudes towards inequality in contemporary societies"
+subtitle: "Database processing"
+author: "Gonzalo Franetovic"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  rmdformats::downcute:
+    toc_depth: 3 
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    highlight: tango
+    paged_table: true
+---
+
+
+```{r Setup, message=FALSE, warning=FALSE, include=FALSE, paged.print=TRUE}
+knitr::opts_chunk$set(
+	message = FALSE,
+	warning = FALSE,
+	echo = FALSE,
+	include = TRUE,
+	fig.align="center",
+	out.width='\\textwidth',
+	fig.fullwidth=TRUE,
+	paged.print=TRUE
+	)
+```
+
+
+```{r}
+
+# Load packages
+# install.packages("pacman")
+# install.packages("devtools")
+# devtools::install_git("https://code.europa.eu/digclass/digclass.git")
+
+library("pacman")
+p_load(tidyverse, here, sjlabelled, janitor, haven, dplyr, ggplot2, 
+       stringr, glue, psych, conflicted, skimr, 
+       summarytools, stargazer, sjmisc, 
+       rmarkdown, DIGCLASS, WDI, dlookr, openxlsx)
+
+# Options
+options(max.print=999999)
+options(scipen=999)
+
+# Packages conflicts
+conflicts_prefer(dplyr::select,
+                 dplyr::filter,
+                 dplyr::lag,
+                 dplyr::recode,
+                 psych::describe)
+
+```
+
+
+# Input
+
+## ISSP 2017 Social Nerworks
+
+```{r}
+#Load database
+issp_2017_original = read_dta(here("Input", "ISSP 2017 Social Networks", "ZA6980_v2-0-0.dta"))  %>% 
+  clean_names()
+
+#Estonia
+estonia_2017 = read_dta(here("Input", "ISSP 2017 Social Networks", "ZA5962_v1-0-0.dta"))  %>% 
+  clean_names()
+
+#Turkey
+turkey_2017 = read_dta(here("Input", "ISSP 2017 Social Networks", "ZA5521_v1-0-0.dta"))  %>% 
+  clean_names() %>% 
+  mutate(c_alphan = "TR")
+
+#Merge
+issp_2017_original_full = issp_2017_original %>% 
+  bind_rows(estonia_2017) %>% 
+  bind_rows(turkey_2017)
+
+issp_2017_original_full = issp_2017_original_full %>% 
+  mutate(country_complete = as_character(country),
+         country_long = gsub(".*-(.+)", "\\1", country_complete),
+         country_short = c_alphan) %>% 
+  arrange(country_complete)
+
+issp_2017_original_full = issp_2017_original_full %>% 
+  mutate(country_complete = ifelse(country_complete=="GB-Great Britain and/or United Kingdom",
+                               "GB-Great Britain", country_complete),
+         country_long = ifelse(country_long=="Great Britain and/or United Kingdom",
+                               "Great Britain", country_long),
+         country_short = ifelse(country_short=="GB-GBN", "GB", country_short)
+         )
+
+#Country vectors
+issp_2017_countries = issp_2017_original_full %>% 
+  distinct(country_complete, country_long, country_short)
+
+issp_2017_countries_s = issp_2017_original_full %>% 
+  distinct(country_short) %>% 
+  mutate(country_short_l = tolower(country_short))
+
+issp_2017_countries_v = issp_2017_countries %>% select(country_long) %>% as_vector()
+issp_2017_countries_v_su = issp_2017_countries_s %>% select(country_short) %>% as_vector()
+issp_2017_countries_v_sl = issp_2017_countries_s %>% select(country_short_l) %>% as_vector()
+
+# Save full ISSP database for additional analyses
+saveRDS(issp_2017_original_full, here("Output", "260608_ISSP_Social_Networks_Full.rds"))
+
+```
+
+```{r}
+#Select
+issp_2017_full = issp_2017_original_full %>% 
+  select(
+    caseid, country_complete:country_short,
+    v1:v10, #position_generator
+    v11:v14, #atittudes_inequality
+    v46, #network_size
+    v59, #insecurity
+    sex, age, educyrs, 
+    degree:union, 
+    party_lr, isco08,
+    urbrural,
+    f_born, m_born,
+    ends_with("_inc"),
+    weight
+  ) %>% 
+  select(-c(starts_with("sp"), typorg1, typorg2))
+
+#Missing values
+issp_2017_full = issp_2017_full %>% 
+  mutate(across(v1:v46, ~replace(., .>=9 , NA)), #9
+         across(c(sex, degree, work, emprel,
+                nemploy, partliv, union, wrksup, urbrural), 
+                ~replace(., .>=9 , NA)),
+         across(c(educyrs, wrkhrs, mainstat, party_lr), 
+                ~replace(., .>=99 , NA)), #99
+         across(c(age, wrkhrs, mainstat, f_born, m_born), 
+                ~replace(., .>=999 , NA)), #999
+         across(c(nemploy, nsup, isco08), 
+                ~replace(., .>=9999 , NA)) #9999
+         )
+
+#Rename
+issp_2017_full = issp_2017_full %>% 
+  rename(pg_1_driver = v1,
+         pg_2_executive = v2,
+         pg_3_cleaner = v3,
+         pg_4_barber = v4,
+         pg_5_manager = v5,
+         pg_6_lawyer = v6,
+         pg_7_mechanic = v7,
+         pg_8_nurse = v8,
+         pg_9_police = v9,
+         pg_10_teacher = v10,
+         p_ineq = v11,
+         # b_egal = v12,
+         b_redis = v13,
+         # b_lazy = v14,
+         net_size = v46,
+         sex = sex,
+         age = age,
+         educyrs = educyrs,
+         degree = degree,
+         insecurity = v59,
+         work = work,
+         left = party_lr,
+         area = urbrural,
+         f_born = f_born,
+         m_born = m_born)
+
+issp_2017 = issp_2017_full
+
+```
+
+# Processing
+
+## Attitudes towards inequality
+
+```{r}
+# Missing values and invert polarity
+issp_2017 = issp_2017 %>% 
+  mutate(across(c(p_ineq, b_redis), ~replace(., .>5 | .<1 , NA))) %>% 
+  mutate(across(c(p_ineq, b_redis),  ~ 6 - .))
+```
+
+```{r eval=FALSE, include=FALSE}
+# Missing values and invert polarity
+issp_20171 = issp_2017_full %>% 
+  mutate(across(all_of(var_attitudes), ~replace(., .==8 | .==9, NA))) 
+
+val_label(issp_20171$p_ineq, 8
+          ) <- NULL  
+```
+
+```{r eval=FALSE, include=FALSE}
+
+#Select variables
+attitudes = issp_2017_full %>% 
+  select(p_ineq, b_redis)
+
+#Variable names
+var_attitudes = attitudes %>% 
+  names()
+
+attitudes$p_ineq = reverse_labelled_values(attitudes$p_ineq)
+
+#Extract variable labels
+att_var_labels = issp_2017_full %>% 
+  select(p_ineq, b_redis) %>% 
+  get_variable_labels() %>% 
+  unlist() %>%
+  as_character() %>% 
+  as_vector()
+
+#Set labels
+set_label(issp_2017$p_ineq) = att_var_labels[1]
+set_label(issp_2017$b_redis) = att_var_labels[3]
+
+#Extract variable labels
+att_levels = get_value_labels(issp_2017_full$p_ineq) %>% names()
+att_levels = att_levels[1:5]
+att_levels = rev(att_levels)
+
+#Set labels
+set_value_labels(issp_2017$p_ineq) = att_levels
+levels(issp_2017$b_redis) = att_levels
+
+#Table
+attitudes_table %>% 
+  dfSummary(
+    style = "grid",
+    varnumber=FALSE, labels.col	= TRUE, 
+    na.col=FALSE, graph.col=TRUE,
+    silent=TRUE, headings=FALSE,
+    plain.ascii = FALSE
+    ,
+    col.widths = rep(1,6)
+          ) %>% 
+  print(., method = 'render')
+
+```
+
+
+## Sociodemographic
+
+```{r}
+#Creating variables
+
+##Sex
+issp_2017 = issp_2017 %>% 
+  mutate(sex = case_when(sex==1 ~ "Male",
+                         sex==2 ~ "Female"))
+
+issp_2017$sex <- factor(issp_2017$sex,
+                levels = c("Male","Female"))
+
+##Age
+issp_2017 = issp_2017 %>% 
+  mutate(age2 = age^2) 
+
+##Education
+issp_2017 = issp_2017 %>% 
+  mutate(educ = case_when(degree %in% c(0,1) ~ "Primary or less",
+                          degree==2          ~ "Lower secondary",
+                          degree %in% c(3,4) ~ "Upper secondary",
+                          degree %in% c(5,6) ~ "Tertiary"))
+
+issp_2017$educ <- factor(issp_2017$educ,
+                levels = c(
+                  "Primary or less",
+                  "Lower secondary",
+                  "Upper secondary",
+                  "Tertiary"))
+
+##Area
+issp_2017 = issp_2017 %>% 
+  mutate(area_r = case_when(area<=2 ~ "Big city",
+                             area>2 & area<=5 ~ "Town or countryside")) %>% 
+  select(-area) %>% 
+  rename(area = area_r)
+
+issp_2017$area <- factor(issp_2017$area,
+                             levels = c(
+                               "Town or countryside",
+                               "Big city"))
+
+```
+
+## SES
+
+```{r}
+# ISEI
+issp_2017 = issp_2017 %>% 
+  mutate(ses = as.numeric(isco08_to_isei(isco08)))
+
+issp_2017 = issp_2017 %>% 
+  mutate(ses3 = case_when(ses<=40 ~ "Low",
+                          ses>40 & ses<65 ~ "Mid", 
+                          ses>=65 ~ "High"))
+
+issp_2017$ses3 = factor(
+  issp_2017$ses3, 
+  levels = c("High", "Mid", "Low"))
+
+```
+
+
+```{r}
+#Select
+issp_2017_final = issp_2017 %>% 
+  select(caseid,
+         country_complete,
+         country_long,
+         country_short,
+         pg_1_driver,
+         pg_2_executive,
+         pg_3_cleaner,
+         pg_4_barber,
+         pg_5_manager,
+         pg_6_lawyer,
+         pg_7_mechanic,
+         pg_8_nurse,
+         pg_9_police,
+         pg_10_teacher,
+         p_ineq,
+         b_redis,
+         # net_size,
+         sex,
+         starts_with("age"),
+         # educyrs,
+         # educ,
+         # insecurity,
+         starts_with("oesch"),
+         starts_with("ses"),
+         isco08,
+         work,
+         left,
+         area,
+         # f_born,
+         # m_born,
+         weight
+         )
+
+```
+
+
+## Personal networks
+
+```{r}
+# frq(issp_2017_final, starts_with("pg_"))
+
+#Dummy contacts
+issp_2017_final = issp_2017_final %>% 
+    mutate(across(starts_with("pg_"), 
+               ~case_when(. %in% c(1:3) ~ 1,
+                          . %in% c(4:5) ~ 0), 
+               .names = '{col}'))
+  
+network_composition = issp_2017_final %>% 
+  select(caseid, country_short, starts_with("pg_"))
+
+frq(network_composition, starts_with("pg_"))
+
+#Occupations master
+isco_codes = c(8331, 1120, 9112, 5141, 1212,
+               2611, 7231, 2221, 5412, 2341)
+isco_positions = c("01", "02", "03", "04", "05", 
+                   "06", "07", "08", "09", "10")
+
+isco_master = all_labels$isco08 %>% 
+  clean_names() %>% 
+  filter(isco08 %in% isco_codes) %>% 
+  arrange(factor(isco08, levels = isco_codes)) %>% 
+  rename(isco08 = isco08,
+         occupation = isco08_label_e) %>% 
+  mutate(isei08 = as.numeric(isco08_to_isei(isco08))) %>% 
+  add_column(isco_positions) %>% 
+  mutate(occupation = str_replace_all(occupation, "'", ""))
+
+#Column names
+network_composition_positions = network_composition %>% 
+  `colnames<-`(c("caseid", "country_short", isco_positions))
+
+```
+
+
+```{r}
+#Long
+network_composition_long = network_composition_positions %>% 
+  pivot_longer(cols = all_of(isco_positions), names_to = "isco_positions")
+
+#ISEI
+network_composition_long = network_composition_long %>% 
+  left_join(isco_master)
+
+#Drop cases with missings
+network_composition_long %>% 
+  group_by(caseid, country_short) %>% 
+  summarise(n_count = sum(!is.na(value))) %>% 
+  ungroup() %>%  
+  frq(n_count)
+
+network_composition_long = network_composition_long %>% 
+  group_by(caseid, country_short) %>% 
+  mutate(n_count = sum(!is.na(value))) %>% 
+  ungroup() %>% 
+  filter(n_count==10)
+
+#Social positions
+network_composition_long = network_composition_long %>% 
+  mutate(status_position = case_when(isei08<=40  ~ "Low",
+                                 isei08>40 & isei08<65 ~ "Mid", 
+                                 isei08>=65 ~ "High"))
+
+network_composition_long$status_position = factor(
+  network_composition_long$status_position, 
+  levels = c("Low", "Mid", "High"))
+
+```
+
++ Ego measures
+
+```{r}
+# (i) the highest status job accessed (upper reachability), 
+# (ii) the range between highest and lowest occupations accessed (resource heterogeneity), 
+# (iii) the total number of occupations accessed (network extensity), 
+# (iv) the total accessed prestige (resource volume), 
+# (v) the average status of jobs accessed (network prestige), 
+# (vi) the total number of higher-status positions accessed, 
+# (vii) the total number of medium-status positions accessed, and 
+# (viii) the total number of lower-status positions accessed.
+
+# Pre-variables
+network_composition_ego = network_composition_long %>% 
+  filter(value==1) %>% 
+  group_by(caseid, country_short) %>% 
+  mutate(max_isei = max(isei08),
+         min_isei = min(isei08),
+         mean_isei = mean(isei08),
+         sum_isei = sum(isei08),
+         positions_n = n(),
+         positions_high = sum(status_position == "High", na.rm = TRUE),
+         positions_mid = sum(status_position == "Mid", na.rm = TRUE),
+         positions_low = sum(status_position == "Low", na.rm = TRUE)) %>% 
+  slice(1) %>% 
+  select(caseid, country_short, max_isei:positions_low) %>% 
+  ungroup()
+
+# Variables
+network_composition_ego = network_composition_ego %>% 
+  mutate(
+    pn_upperreachability = max_isei,
+    pn_networkrange = max_isei - min_isei,
+    pn_networkextensity = positions_n,
+    # pn_resourcevolume = sum_isei,
+    pn_networkprestige = mean_isei,
+    pn_high = positions_high,
+    pn_mid = positions_mid,
+    pn_low = positions_low
+    )
+```
+
+
+## Final database
+
+### Filter cases and select variables
+
+```{r}
+
+# Filter
+## 18 yo or more
+issp_2017_final = issp_2017_final %>% 
+  filter(age>=18)
+
+# Join
+issp_2017_final_network = issp_2017_final %>% 
+  left_join(network_composition_ego) 
+
+# More than just one known position
+issp_2017_final_network = issp_2017_final_network %>% 
+  filter(positions_n>1)
+
+# Complete dataframe
+complete_ids_df = issp_2017_final_network %>% 
+  select(caseid, country_complete:country_short,
+         p_ineq, b_redis,
+         starts_with("pn_"),
+         sex, 
+         starts_with("age"), 
+         # educ, 
+         area,
+         starts_with("ses")
+         ) %>% 
+  na.omit()
+
+# skim(complete_ids_df)
+
+# Complete ids
+complete_ids = complete_ids_df %>% 
+  select(caseid, country_short) %>% 
+  mutate(complete_ids = paste0(caseid,"_",country_short)) %>% 
+  select(complete_ids) %>% 
+  as_vector()
+
+# Filter database
+issp_2017_final_na = issp_2017_final_network %>% 
+  mutate(id_country =  paste0(caseid,"_",country_short)) %>% 
+  filter(id_country %in% complete_ids) #Dropping Slovenia because of no b_redis
+
+```
+
+### Run PCA for personal networks
+
+```{r}
+# PCA Oblimin Rotation
+
+# Select variables
+network_composition_ego_final = issp_2017_final_na %>% 
+  select(caseid, country_short, starts_with("pn_"))
+
+network_composition_ego_pca = network_composition_ego_final %>% 
+  select(starts_with("pn_"))
+
+# Correlation matrix
+cor_pca = network_composition_ego_pca %>% 
+  cor()
+
+# Bartlett Test
+bartlett.test(network_composition_ego_pca)
+
+# Eigenvalues
+eigen(cor_pca)$values
+
+# PCA
+set.seed(1)
+network_pca = principal(r = cor(network_composition_ego_pca), 
+                        nfactors = 2, rotate = "oblimin", scores = TRUE)
+
+# Factor loadings
+print(network_pca$loadings, cutoff = 0.55)
+print(network_pca$loadings, cutoff = 0)
+
+# Factor scores
+network_pca_scores = psych::factor.scores(network_composition_ego_pca, network_pca)
+factor_scores = network_pca_scores$scores
+
+issp_2017_final_na = issp_2017_final_na %>% 
+  bind_cols(factor_scores) %>% 
+  clean_names() %>% 
+  rename(net_diversity = tc1,
+         net_status = tc2)
+
+# Convert the factor scores to a data frame (if not already)
+table_a2 = as.data.frame(network_pca$loadings[]) %>%
+  clean_names() %>% 
+  mutate(across(c(tc1,tc2), ~ round(.x, 3)))
+
+cor(issp_2017_final_na$net_diversity,issp_2017_final_na$net_status)
+
+```
+
+```{r}
+
+# Extract the factor loadings
+loadings <- as.data.frame(network_pca$loadings[])
+
+# Dynamically extract the number of components
+n_factors <- ncol(loadings)
+
+# Extract additional information dynamically
+ss_loadings <- network_pca$values[1:n_factors]  # Extract eigenvalues for components
+proportion_var <- network_pca$Vaccounted[2, 1:n_factors]  # Proportion of variance
+cumulative_var <- network_pca$Vaccounted[3, 1:n_factors]  # Cumulative variance
+
+# Create the additional summary info as a data frame
+summary_info <- as.data.frame(rbind(ss_loadings, proportion_var, cumulative_var))
+rownames(summary_info) <- c("SS loadings", "Proportion Var", "Cumulative Var")
+summary_info <- tibble::rownames_to_column(summary_info, var = "Variable")
+
+# Add meaningful column names to the summary_info
+colnames(summary_info)[-1] <- paste0("TC", 1:n_factors)
+
+# Add row names to the loadings
+loadings <- tibble::rownames_to_column(loadings, var = "Variable")
+
+# Combine loadings and summary information
+table_a2 <- bind_rows(
+  loadings,
+  summary_info
+) %>% 
+  clean_names() %>%
+  mutate(across(c(tc1, tc2), ~ round(.x, 3)))
+
+write.xlsx(table_a2, here("Output", "Appendix", "Table_A2.xlsx"))
+```
+
+
+```{r}
+
+pn_vars = network_composition_ego_final %>% 
+  select(starts_with("pn_")) %>%
+  names()
+
+# PCA global
+pca_global <- principal(
+  issp_2017_final_na[, pn_vars],
+  nfactors = 2,
+  rotate = "oblimin",
+  scores = FALSE
+)
+
+global_loadings <- as.data.frame(unclass(pca_global$loadings)) %>%
+  tibble::rownames_to_column("variable") %>%
+  dplyr::rename(
+    global_tc1 = TC1,
+    global_tc2 = TC2
+  )
+
+# Countries where factors must be swapped due to factor alignment
+swap_countries <- c(
+  "ZA", "ES", "TW", "RU", "CZ", "AT", "GB",
+  "TH", "HU", "TR", "MX", "JP", "SR", "FI"
+)
+
+# PCA by country
+country_ns <- issp_2017_final_na %>%
+  dplyr::count(country_short, country_long, sort = TRUE)
+
+pca_by_country <- country_ns %>%
+  dplyr::mutate(
+    pca = purrr::map(country_short, ~ {
+      dat <- issp_2017_final_na %>%
+        dplyr::filter(country_short == .x) %>%
+        dplyr::select(all_of(pn_vars)) 
+
+principal(
+        dat,
+        nfactors = 2,
+        rotate = "oblimin",
+        scores = FALSE
+      )
+    }),
+    loadings_raw = purrr::map(pca, ~ {
+      as.data.frame(unclass(.x$loadings)) %>%
+        tibble::rownames_to_column("variable") %>%
+        dplyr::rename(
+          tc1 = TC1,
+          tc2 = TC2
+        ) %>%
+        dplyr::select(variable, tc1, tc2)
+    }),
+    values_raw = purrr::map(pca, ~ unname(.x$values[1:2])),
+    prop_var_raw = purrr::map(pca, ~ unname(.x$Vaccounted[2, 1:2])),
+    swap = country_short %in% swap_countries,
+    loadings = purrr::map2(loadings_raw, swap, ~ {
+      df <- .x
+
+      if (.y) {
+        tc1_old <- df$tc1
+        tc2_old <- df$tc2
+
+        df$tc1 <- tc2_old
+        df$tc2 <- tc1_old
+      }
+
+      df %>%
+        dplyr::select(variable, tc1, tc2)
+    }),
+    values = values_raw,
+    prop_var = prop_var_raw
+  )
+
+# Country loadings
+loadings_country <- pca_by_country %>%
+  dplyr::select(country_short, country_long, n, swap, loadings) %>%
+  tidyr::unnest(loadings) %>%
+  dplyr::left_join(global_loadings, by = "variable") %>%
+  dplyr::mutate(
+    same_sign_tc1 = sign(tc1) == sign(global_tc1),
+    same_sign_tc2 = sign(tc2) == sign(global_tc2)
+  )
+
+# Country summary
+summary_country <- pca_by_country %>%
+  dplyr::transmute(
+    country_short,
+    country_long,
+    n,
+    swapped = swap,
+    eig1_raw = purrr::map_dbl(values_raw, 1),
+    eig2_raw = purrr::map_dbl(values_raw, 2),
+    eig1 = purrr::map_dbl(values, 1),
+    eig2 = purrr::map_dbl(values, 2),
+    prop1_raw = purrr::map_dbl(prop_var_raw, 1),
+    prop2_raw = purrr::map_dbl(prop_var_raw, 2),
+    prop1 = purrr::map_dbl(prop_var, 1),
+    prop2 = purrr::map_dbl(prop_var, 2)
+  )
+
+# Sign consistency
+sign_consistency <- loadings_country %>%
+  dplyr::group_by(country_short, country_long) %>%
+  dplyr::summarise(
+    share_same_sign_tc1 = mean(same_sign_tc1, na.rm = TRUE),
+    share_same_sign_tc2 = mean(same_sign_tc2, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::left_join(
+    summary_country %>%
+      dplyr::select(
+        country_short, country_long, n, swapped,
+        eig1_raw, eig2_raw, eig1, eig2,
+        prop1_raw, prop2_raw, prop1, prop2
+      ),
+    by = c("country_short", "country_long")
+  )
+
+# Country table for appendix
+table_a3 <- sign_consistency %>%
+  dplyr::select(-swapped) %>%
+  dplyr::arrange(dplyr::desc(n)) %>%
+  dplyr::transmute(
+    Country = country_long,
+    Code = country_short,
+    N = n,
+    `F1 sign consistency` = round(share_same_sign_tc1, 2),
+    `F2 sign consistency` = round(share_same_sign_tc2, 2),
+    `F1 eigenvalue` = round(eig1, 2),
+    `F2 eigenvalue` = round(eig2, 2),
+    `F1 proportion variance` = round(prop1, 2),
+    `F2 proportion variance` = round(prop2, 2)
+  )
+
+openxlsx::write.xlsx(
+  table_a3,
+  here::here("Output", "Appendix", "Table_A3.xlsx"),
+  overwrite = TRUE
+)
+
+table_a3
+
+```
+
+### Standardization by country
+
+```{r}
+
+issp_2017_final_na = issp_2017_final_na %>%
+  mutate(
+    net_diversity_std = as.numeric(scale(net_diversity)),
+    net_status_std = as.numeric(scale(net_status))
+  ) %>%
+  group_by(country_short) %>%
+  mutate(
+    net_diversity_std_country = as.numeric(scale(net_diversity)),
+    net_status_std_country = as.numeric(scale(net_status))
+  ) %>%
+  ungroup()
+
+
+hist(issp_2017_final_na$net_diversity)
+hist(issp_2017_final_na$net_diversity_std)
+hist(issp_2017_final_na$net_diversity_std_country)
+
+hist(issp_2017_final_na$net_status)
+hist(issp_2017_final_na$net_status_std)
+hist(issp_2017_final_na$net_status_std_country)
+```
+
+### Weights
+
+```{r}
+# Turkey weights
+issp_2017_final_na = issp_2017_final_na %>% 
+  mutate(weight = ifelse(country_short=="TR", 1, weight))
+```
+
+### Reorder database
+
+```{r}
+
+#Reorder
+final_database = issp_2017_final_na %>% 
+  select(id_country, caseid, country_short, country_long, 
+         p_ineq, b_redis,
+         sex, 
+         starts_with("age"), 
+         # educ, 
+         area,
+         starts_with("ses"),
+         starts_with("pg_"),
+         starts_with("pn_"),
+         starts_with("net_"),
+         weight) %>% 
+  arrange(country_short, caseid)
+
+paged_table(final_database)
+
+```
+
+```{r}
+
+database_names = names(final_database)
+
+final_database %>% 
+  mutate(across(all_of(database_names), ~to_numeric(.))) %>% 
+  as.data.frame() %>% 
+  stargazer(type = "text")
+
+```
+
+### Save database
+
+```{r}
+saveRDS(final_database, here("Output", "260608_Final_Database_Article.rds"))
+```
+
+
+
+
