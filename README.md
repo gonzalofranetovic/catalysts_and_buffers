@@ -13,6 +13,15 @@ DOI: https://doi.org/10.1016/j.ssresearch.2026.103389
 
 **Keywords:** Subjective inequality, Social networks, Diversity, Status, SES.
 
+**Source data:**  
+Before running the replication scripts, users must manually add the following ISSP source datasets to the folder `Input/ISSP 2017 Social Networks/`:
+
+- `ZA6980_v2-0-0.dta` — ISSP Research Group (2019). *International Social Survey Programme: Social Networks and Social Resources - ISSP 2017* (ZA6980; Version 2.0.0) [Data set]. GESIS, Cologne. https://doi.org/10.4232/1.13322
+- `ZA5962_v1-0-0.dta` — Roosalu, T., Täht, K., & Kazjulja, M. (2021). *International Social Survey Programme: Social Networks and Social Resources - ISSP 2017 (Estonia)* (ZA5962; Version 1.0.0) [Data set]. GESIS, Cologne. https://doi.org/10.4232/1.13659
+- `ZA5521_v1-0-0.dta` — Çarkoğlu, A., & Kalaycıoğlu, E. (2020). *International Social Survey Programme: Social Networks and Social Resources - ISSP 2017 (Turkey)* (ZA5521; Version 1.0.0) [Data set]. GESIS, Cologne. https://doi.org/10.4232/1.13455
+
+These files are not redistributed in the repository and must be downloaded manually from GESIS before running the replication scripts.
+
 **Correspondence:**  
 Gonzalo Franetovic  
 gonzalo.franetovic@uab.cat
